@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Eqwerty(browser)</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#06b6d4;--muted:#94a3b8;color-scheme:dark}
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    body{display:flex;flex-direction:column;gap:8px;padding:12px;background:linear-gradient(180deg,#071021 0%, #071428 100%);color:#e6eef6}
+    header{display:flex;gap:8px;align-items:center}
+    .controls{display:flex;gap:6px;align-items:center}
+    button{background:var(--card);border:1px solid rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;color:inherit;cursor:pointer}
+    input[type="text"]{flex:1;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);background:#071826;color:inherit}
+    main{flex:1;display:flex;gap:12px;min-height:0}
+    .sidebar{width:260px;background:rgba(255,255,255,0.02);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;overflow:auto}
+    .content{flex:1;background:rgba(255,255,255,0.01);border-radius:10px;padding:6px;display:flex;flex-direction:column;min-height:0}
+    iframe.viewer{flex:1;border-radius:8px;border:0;background:white}
+    .list{display:flex;flex-direction:column;gap:6px}
+    .item{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-radius:6px;background:transparent}
+    .muted{color:var(--muted);font-size:13px}
+    .small{font-size:13px}
+    .badge{background:rgba(255,255,255,0.03);padding:3px 7px;border-radius:999px}
+    footer{font-size:13px;color:var(--muted);text-align:center;padding:6px}
+    @media (max-width:900px){.sidebar{display:none}}
+    .warning{padding:12px;border-radius:8px;background:linear-gradient(90deg,rgba(255, 165, 0, 0.08), rgba(255, 165, 0, 0.02));color:#ffd8a8}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="controls" style="flex:1">
+      <button id="back" title="Назад">◀</button>
+      <button id="forward" title="Вперёд">▶</button>
+      <button id="home" title="Главная">🏠</button>
+      <input id="url" type="text" placeholder="Вставьте URL (https://...) или поисковый запрос" spellcheck="false">
+      <button id="go">Перейти</button>
+      <button id="openNew" title="Открыть в новой вкладке">В новой</button>
+      <button id="bookmark" title="Добавить в закладки">★</button>
+    </div>
+    <div style="width:220px;text-align:right" class="muted small">Мини‑браузер — Локальный демонстрационный файл</div>
+  </header>
+
+  <main>
+    <aside class="sidebar">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>Закладки</strong>
+        <button id="clearBookmarks" title="Очистить">Очистить</button>
+      </div>
+      <div id="bookmarks" class="list"></div>
+      <hr style="border:none;height:1px;background:rgba(255,255,255,0.03);margin:8px 0">
+      <strong>История</strong>
+      <div id="history" class="list muted small"></div>
+      <hr style="border:none;height:1px;background:rgba(255,255,255,0.03);margin:8px 0">
+      <div class="muted small">Советы:</div>
+      <div class="muted small">— Небольшой локальный браузер использует &lt;iframe&gt;. Многие сайты запрещают встраивание (frame-ancestors/CSP).</div>
+      <div class="muted small">— Если сайт не загружается, нажмите "В новой" чтобы открыть в отдельной вкладке.</div>
+    </aside>
+
+    <section class="content">
+      <div id="notice" class="warning" style="display:none"></div>
+      <iframe id="viewer" class="viewer" sandbox="allow-forms allow-scripts allow-popups allow-same-origin"></iframe>
+    </section>
+  </main>
+
+  <footer>Файл можно открыть локально. Хочешь добавить темы, прокси для обхода запрещений iframe или поддержку вкладок — скажи.</footer>
+
+  <script>
+    // Простой одностраничный "браузер" на iframe с историей и закладками (localStorage)
+    const urlInput = document.getElementById('url');
+    const viewer = document.getElementById('viewer');
+    const backBtn = document.getElementById('back');
+    const forwardBtn = document.getElementById('forward');
+    const goBtn = document.getElementById('go');
+    const homeBtn = document.getElementById('home');
+    const openNewBtn = document.getElementById('openNew');
+    const bookmarkBtn = document.getElementById('bookmark');
+    const bookmarksEl = document.getElementById('bookmarks');
+    const historyEl = document.getElementById('history');
+    const notice = document.getElementById('notice');
+
+    const HOME = 'https://example.com';
+
+    // simple history stack (we can't read iframe history across origins)
+    let historyStack = JSON.parse(localStorage.getItem('mini_history')||'[]');
+    let historyPos = historyStack.length - 1;
+
+    function saveHistory(){ localStorage.setItem('mini_history', JSON.stringify(historyStack)); }
+    function updateHistoryView(){ historyEl.innerHTML = ''; const recent = historyStack.slice().reverse(); recent.slice(0,30).forEach(url=>{ const d = document.createElement('div'); d.className='item'; d.innerHTML = `<span class="small">${url}</span><div><button class="small open">Открыть</button></div>`; d.querySelector('button.open').onclick = ()=>load(url); historyEl.appendChild(d); }); }
+
+    // bookmarks
+    let bookmarks = JSON.parse(localStorage.getItem('mini_bookmarks')||'[]');
+    function saveBookmarks(){ localStorage.setItem('mini_bookmarks', JSON.stringify(bookmarks)); }
+    function renderBookmarks(){ bookmarksEl.innerHTML = ''; if(bookmarks.length===0){ bookmarksEl.innerHTML = '<div class="muted small">Нет закладок</div>'; return } bookmarks.forEach((b,i)=>{ const el = document.createElement('div'); el.className='item'; el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;max-width:170px">${b}</span><div><button class="open">Открыть</button> <button class="del">✕</button></div>`; el.querySelector('.open').onclick = ()=>load(b); el.querySelector('.del').onclick = ()=>{ bookmarks.splice(i,1); saveBookmarks(); renderBookmarks(); }; bookmarksEl.appendChild(el); }); }
+
+    // Utils
+    function normalizeInput(text){ if(!text) return ''; text = text.trim(); if(text.match(/^\w+:\/\//)) return text; // has scheme
+      // if looks like domain or contains space -> treat as search
+      if(text.includes(' ') || !text.includes('.') ) return 'https://www.google.com/search?q=' + encodeURIComponent(text);
+      return 'https://' + text;
+    }
+
+    function load(raw){ const u = normalizeInput(raw); urlInput.value = u; try{
+        viewer.src = u;
+        notice.style.display = 'none';
+        // push to history if last is different
+        if(historyStack[historyStack.length-1] !== u){ historyStack.push(u); historyPos = historyStack.length-1; saveHistory(); updateHistoryView(); }
+      }catch(e){ notice.innerText = 'Ошибка загрузки: ' + e; notice.style.display = 'block'; }
+      updateNavButtons();
+    }
+
+    // navigation
+    function goBack(){ if(historyPos>0){ historyPos--; const url = historyStack[historyPos]; viewer.src = url; urlInput.value = url; updateNavButtons(); } }
+    function goForward(){ if(historyPos < historyStack.length-1){ historyPos++; const url = historyStack[historyPos]; viewer.src = url; urlInput.value = url; updateNavButtons(); } }
+    function updateNavButtons(){ backBtn.disabled = historyPos <= 0; forwardBtn.disabled = historyPos >= historyStack.length-1; }
+
+    // iframe error detection: many sites block framing — detect by trying to access contentWindow.location (may throw)
+    function checkFrameBlocked(){ setTimeout(()=>{
+      try{
+        // reading location.href will throw for cross-origin or if blocked; if same-origin, we'll be fine
+        const href = viewer.contentWindow.location.href;
+        // if it's about:blank or data, ignore
+        if(!href || href === 'about:blank') return;
+        notice.style.display = 'none';
+      }catch(e){ // framing likely blocked by CSP
+        notice.innerHTML = 'Этот сайт не разрешает загрузку в &lt;iframe&gt; (CSP или X-Frame-Options). Нажмите "В новой" чтобы открыть в новой вкладке.';
+        notice.style.display = 'block';
+      }
+    },800)}
+
+    // events
+    goBtn.onclick = ()=>load(urlInput.value);
+    urlInput.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') load(urlInput.value); });
+    backBtn.onclick = goBack;
+    forwardBtn.onclick = goForward;
+    homeBtn.onclick = ()=>load(HOME);
+    openNewBtn.onclick = ()=>{ const u = normalizeInput(urlInput.value||historyStack[historyStack.length-1]||HOME); window.open(u, '_blank'); }
+    bookmarkBtn.onclick = ()=>{ const u = urlInput.value || viewer.src || HOME; if(!bookmarks.includes(u)){ bookmarks.push(u); saveBookmarks(); renderBookmarks(); } }
+    document.getElementById('clearBookmarks').onclick = ()=>{ if(confirm('Удалить все закладки?')){ bookmarks = []; saveBookmarks(); renderBookmarks(); } }
+
+    // monitor iframe load to check if blocked
+    viewer.addEventListener('load', ()=>{ checkFrameBlocked(); });
+
+    // init
+    renderBookmarks(); updateHistoryView(); updateNavButtons();
+    if(historyStack.length>0){ historyPos = historyStack.length-1; const last = historyStack[historyPos]; load(last); } else { load(HOME); }
+
+    // expose for debugging
+    window.MINI_BROWSER = {load, goBack, goForward, getBookmarks: ()=>bookmarks, getHistory: ()=>historyStack};
+  </script>
+</body>
+</html>
